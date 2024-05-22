@@ -1,6 +1,7 @@
 load_balancer:
   name: lb 
   algorithm: pewma
+  port: 8888
   servers:
     - name: server1
       address: 192.168.1.1

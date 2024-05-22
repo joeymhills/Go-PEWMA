@@ -5,8 +5,12 @@ import (
 )
 
 func TestYaml(t *testing.T) {
-    _, err := Init("config.yaml")
+    s, err := Init("config.yaml")
     if err != nil {
 	t.Errorf("error parsing config from yaml file: %s", err)
+    }
+    err = s.StartServer()
+    if err != nil {
+	t.Error(err)
     }
 }

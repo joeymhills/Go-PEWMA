@@ -1,17 +1,19 @@
 package goggins
 
 import (
-	"fmt"
-	"io"
-	"net/http"
-	"os"
+    "fmt"
+    "net/http"
+    "os"
+    "sync"
+    "time"
 
-	"gopkg.in/yaml.v3"
+    "gopkg.in/yaml.v3"
 )
 
 type LoadBalancer struct {
     Name string `yaml:"name"`
     Algorithm string `yaml:"algorithm"`
+    Port int `yaml:"port"`
     Servers []Server`yaml:"servers"`
     HealthCheck HealthCheck `yaml:"heatlh_check"`
 }
@@ -21,33 +23,50 @@ type Server struct {
     Port int `yaml:"port"`
     Weight float64 `yaml:"weight"`
     Conns int `yaml:"conns"`
+    mutex sync.Mutex
 }
 type HealthCheck struct {
-	Interval string `yaml:"interval"`
-	Timeout string `yaml:"timeout"`
-	Retries string `yaml:"retries"`
-	Path string `yaml:"path"`
-	Method string `yaml:"method"`
+    Interval string `yaml:"interval"`
+    Timeout string `yaml:"timeout"`
+    Retries string `yaml:"retries"`
+    Path string `yaml:"path"`
+    Method string `yaml:"method"`
 }
 
-func handleRequest(w http.ResponseWriter, r *http.Request,) {
-    body, err := io.ReadAll(r.Body)
-    if err != nil {
-        fmt.Println("Error reading request body")
+func handleRequest(lb *LoadBalancer) func(w http.ResponseWriter, r *http.Request){
+    return func(w http.ResponseWriter, r *http.Request){
+
+    server := lb.selectServer()
+    // Http request will go here
+    start := time.Now()
+    elapsed := time.Since(start).Seconds()
+    server.updateWeight(elapsed)
     }
-
-    fmt.Println(string(body))
 }
 
-// Implements Peak EWMA algorithm detailed here:
+// Updates server weight using Peak EWMA algorithm detailed here:
 // https://linkerd.io/2016/03/16/beyond-round-robin-load-balancing-for-latency/
-func(s *Server) updateWeight(responseTime float64) float64 {
+func(s *Server) updateWeight(responseTime float64) {
+    s.mutex.Lock()
+    defer s.mutex.Unlock()
+
     a := 0.6
     s.Weight = a * responseTime + (1 - a) * s.Weight
-    return s.Weight * float64(s.Conns)
 }
 
-// Used to initialize load balancer struct from yaml file
+//TODO: Implement a min heap in place of iterating over a for loop
+func(lb *LoadBalancer) selectServer() *Server {
+    fastestServ := &lb.Servers[0]
+    for i := 0; i < len(lb.Servers); i++ {
+	if (lb.Servers[i].Weight * float64(lb.Servers[i].Conns)) > (fastestServ.Weight * float64(fastestServ.Conns)) {
+	    fastestServ = &lb.Servers[i] 	
+	}
+    }
+
+    return fastestServ
+}
+
+// Parses config.yaml file and returns a handle to load balancer 
 func Init(filepath string) (*LoadBalancer, error) {
     // Reads load balancer config from yaml file
     data, err := os.ReadFile(filepath)
@@ -65,13 +84,17 @@ func Init(filepath string) (*LoadBalancer, error) {
     return &lb, nil
 }
 
-func(*LoadBalancer) StartServer() {
+func(lb *LoadBalancer) StartServer() error{
     // Creates HTTP Server
     serv := http.NewServeMux()
-    serv.HandleFunc("/", handleRequest)
 
-    err := http.ListenAndServe("0.0.0.0:8888", serv)
+    serv.HandleFunc("/", handleRequest(lb))
+    addr := fmt.Sprintf("0.0.0.0:" + fmt.Sprintf("%d", lb.Port))
+    
+    err := http.ListenAndServe(addr, serv)
     if err != nil {
 	fmt.Println("error starting server")
+	return err
     }
+    return nil
 }
