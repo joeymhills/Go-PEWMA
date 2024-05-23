@@ -4,6 +4,7 @@ import (
     "fmt"
     "net/http"
     "os"
+    "io"
     "sync"
     "time"
 
@@ -37,10 +38,22 @@ func handleRequest(lb *LoadBalancer) func(w http.ResponseWriter, r *http.Request
     return func(w http.ResponseWriter, r *http.Request){
 
     server := lb.selectServer()
-    // Http request will go here
+    addr := fmt.Sprintf(server.Address + fmt.Sprintf("%d", server.Port))
+
     start := time.Now()
+    resp, err := http.Post(addr, "plain/text", r.Body)
+    if err != nil {
+	fmt.Print("error in creating request: ", err)
+    }
     elapsed := time.Since(start).Seconds()
-    server.updateWeight(elapsed)
+    go server.updateWeight(elapsed)
+    
+    respBytes, err := io.ReadAll(resp.Body)
+    if err != nil {
+	fmt.Print("error parsing body: ", err)
+    }
+
+    w.Write(respBytes)
     }
 }
 
